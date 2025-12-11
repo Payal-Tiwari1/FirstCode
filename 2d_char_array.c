@@ -12,7 +12,6 @@ int main()
 	
 	char array1[5][5]={{"payal"},{"abcde"}};
 	printf("%c", array1[1][3]);
-	// change in code.
 
 
 }
