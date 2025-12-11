@@ -7,7 +7,7 @@ int main()
 	printf("%c\n", *(&array[0]+3));
 	
 	printf("enter the value");
-	scanf("%d",&i);
+//	scanf("%d",&i);
 	printf("\n%d", *(&i));
 	
 	char array1[5][5]={{"payal"},{"abcde"}};
