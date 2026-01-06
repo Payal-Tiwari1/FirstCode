@@ -18,6 +18,12 @@ struct emp {
     int location_id;
 };
 
+int is_valid_dob(const char *dob, int *d, int *m, int *y);
+int isValidDate(int d, int m, int y);
+int isFutureDate(int d, int m, int y);
+float get_valid_float(const char *prompt, float min, float max);
+int calculateAge(int d, int m, int y);
+void view_record(int id);
 
 
 int get_int(const char *msg)
@@ -39,7 +45,8 @@ int get_int(const char *msg)
 }
 
 
-float get_float(const char *prompt) {
+float get_valid_float(const char *prompt, float min, float max) 
+{
     char buffer[100];
     float value;
     char *endptr;
@@ -130,23 +137,23 @@ int isFutureDate(int d, int m, int y) {
     return 0;
 }
 
-int validateDOB(const char *dob) {
-    int d, m, y;
+int is_valid_dob(const char *dob, int *d, int *m, int *y) 
+{
 
     /* Strict format check dd-mm-yyyy */
-    if (sscanf(dob, "%2d-%2d-%4d", &d, &m, &y) != 3)
+    if (sscanf(dob, "%2d-%2d-%4d", d, m, y) != 3)
         return 0;
 
-    if (!isValidDate(d, m, y))
+    if (!isValidDate(*d, *m, *y))
         return 0;
 
-    if (isFutureDate(d, m, y))
+    if (isFutureDate(*d, *m, *y))
         return 0;
 
     return 1;
 }
 
-int calculateAge(int d, int m, int y) 
+int calculateAge(int d, int m, int y)
 {
     time_t t = time(NULL);
     struct tm *today = localtime(&t);
@@ -227,19 +234,37 @@ int get_manager_id_by_location(int location_id) {
 
 
 void print_result(MYSQL_RES *res) {
+    if (!res) {
+        printf("No data to display.\n");
+        return;
+    }
+
     MYSQL_ROW row;
-    MYSQL_FIELD *field;
+    MYSQL_FIELD *fields;
     unsigned int num_fields = mysql_num_fields(res);
 
+    if (num_fields == 0) {
+        printf("No columns found.\n");
+        return;
+    }
+
+    // Get all fields at once
+    fields = mysql_fetch_fields(res);
+
     // Print column names
-    while ((field = mysql_fetch_field(res))) {
-        printf("%-20s", field->name);
+    for (unsigned int i = 0; i < num_fields; i++) {
+        printf("%-20s", fields[i].name);
+    }
+    printf("\n");
+
+    for (unsigned int i = 0; i < num_fields; i++) {
+        printf("--------------------");
     }
     printf("\n");
 
     // Print rows
     while ((row = mysql_fetch_row(res))) {
-        for (int i = 0; i < num_fields; i++) {
+        for (unsigned int i = 0; i < num_fields; i++) {
             printf("%-20s", row[i] ? row[i] : "NULL");
         }
         printf("\n");
@@ -248,12 +273,130 @@ void print_result(MYSQL_RES *res) {
 
 
 
+void view_by_location(MYSQL *conn) {
+    char location[50];
+    char query[512];
+
+    get_string("Enter Location Name: ", location, sizeof(location));
+
+    sprintf(query,
+        "SELECT e.emp_id, e.emp_name, l.city, d.dept_name "
+        "FROM emp_info e "
+        "JOIN location l ON e.location_id = l.location_id "
+        "JOIN department d ON e.dept_id = d.dept_id "
+        "WHERE l.city LIKE '%%%s%%' AND e.is_deleted = 0",
+        location);
+
+    mysql_query(conn, query);
+    MYSQL_RES *res = mysql_store_result(conn);
+
+    print_result(res);
+    mysql_free_result(res);
+}
+
+
+
+void view_by_department(MYSQL *conn) {
+    char dept[50];
+    char query[512];
+
+    get_string("Enter Department Name: ", dept, sizeof(dept));
+
+    sprintf(query,
+        "SELECT e.emp_id, e.emp_name, d.dept_name, l.city "
+        "FROM emp_info e "
+        "JOIN department d ON e.dept_id = d.dept_id "
+        "JOIN location l ON e.location_id = l.location_id "
+        "WHERE d.dept_name LIKE '%%%s%%' AND e.is_deleted = 0",
+        dept);
+
+    	//  MUST check this
+    if (mysql_query(conn, query)) {
+        printf("Query Error: %s\n", mysql_error(conn));
+        return;
+    }
+
+    MYSQL_RES *res = mysql_store_result(conn);
+
+    if (!res) {
+        printf("No records found for department '%s'.\n", dept);
+        return;
+    }
+
+    print_result(res);
+    mysql_free_result(res);
+}
+
+
+
+
+void view_by_manager(MYSQL *conn) {
+    char manager[50];
+    char query[512];
+
+    get_string("Enter Manager Name: ", manager, sizeof(manager));
+
+    sprintf(query,
+        "SELECT e.emp_id, e.emp_name, m.emp_name AS manager, d.dept_name "
+        "FROM emp_info e "
+        "JOIN emp_info m ON e.manager_id = m.emp_id "
+        "JOIN department d ON e.dept_id = d.dept_id "
+        "WHERE m.emp_name LIKE '%%%s%%' AND e.is_deleted = 0",manager);
+
+    mysql_query(conn, query);
+    MYSQL_RES *res = mysql_store_result(conn);
+
+    print_result(res);
+    mysql_free_result(res);
+}
+
+
+
+//----------- Display Record By Name ---------------//
+
+void list_emp_by_name(MYSQL *conn, const char *name) {
+    char query[512];
+
+    sprintf(query,
+        "SELECT emp_id, emp_name, dept_id, location_id "
+        "FROM emp_info "
+        "WHERE emp_name LIKE '%%%s%%' AND is_deleted = 0",
+        name);
+
+    if (mysql_query(conn, query)) {
+        printf("Query failed: %s\n", mysql_error(conn));
+        return;
+    }
+
+    MYSQL_RES *res = mysql_store_result(conn);
+    MYSQL_ROW row;
+
+    if (mysql_num_rows(res) == 0) {
+        printf("No matching records found.\n");
+        mysql_free_result(res);
+        return;
+    }
+
+    printf("\n%-6s %-20s %-8s %-8s\n",
+           "ID", "Name", "Dept", "Location");
+    printf("---------------------------------------------\n");
+
+    while ((row = mysql_fetch_row(res))) {
+        printf("%-6s %-20s %-8s %-8s\n",
+               row[0], row[1], row[2], row[3]);
+    }
+
+    mysql_free_result(res);
+}
+
+
 
 // ------------- Create Records --------------//
 
    void create_record(struct emp e)
 {
     char query[512];
+    int id;
 
     sprintf(query,
         "INSERT INTO emp_info "
@@ -265,8 +408,14 @@ void print_result(MYSQL_RES *res) {
     if (mysql_query(conn, query))
         printf("Insert failed: %s\n", mysql_error(conn));
     else
-        printf("Record inserted successfully\n");
+    	
+	id = mysql_insert_id(conn);
+	printf("Record inserted successfully. Emp ID = %d\n", id);
+
+	view_record(id);
 }
+
+
  
 
 
@@ -339,8 +488,13 @@ void view_record(int id)
 
     if ((row = mysql_fetch_row(res)))
     {
-        printf("ID: %s\nName: %s\nAge: %s\nSalary: %s\n",
-               row[0], row[1], row[3], row[4]);
+	printf("%-6s %-20s %-12s %-5s %-10s %-12s %-10s %-10s\n",
+			"ID", "Name", "DOB", "Age", "Salary", "Department", "Manager", "Location");
+
+	printf("------------------------------------------------------------------------------------------\n");
+
+	printf("%-6s %-20s %-12s %-5s %-10s %-12s %-10s %-10s\n",row[0],row[1],row[3],row[4],row[5],row[7],row[8],row[9]);
+
     }
     else
     {
@@ -404,8 +558,19 @@ int main()
     		get_string("Name: ", e.emp_name, sizeof(e.emp_name));
 
 			/* Take DOB */
-    		get_string("DOB (dd-mm-yyyy): ", dob, sizeof(dob));
+		while (1) 
+		{
+    			get_string("DOB (dd-mm-yyyy): ", dob, sizeof(dob));
 
+    			if (is_valid_dob(dob, &d, &m, &y)) 
+			{
+        			break;
+    			} 
+			else 
+			{
+        			printf("Invalid DOB! Please enter valid date in dd-mm-yyyy format.\n");
+    			}
+		}
     			/* Parse DOB */
     		if (sscanf(dob, "%2d-%2d-%4d", &d, &m, &y) != 3) 
 		{
@@ -414,7 +579,7 @@ int main()
     		}
 
     			/* Validate DOB (reuse your function) */
-    		if (!validateDOB(dob))
+    		if (!is_valid_dob(dob, &d, &m, &y))
 		{
         		printf("Invalid DOB. Please enter a realistic date.\n");
         		break;
@@ -430,9 +595,10 @@ int main()
     		}
 
 	        sprintf(e.dob, "%04d-%02d-%02d", y, m, d);
+		
+		e.salary = get_valid_float("Salary: ", 1, 10000000);
+		e.comm   = get_valid_float("Commission: ", 0, 1000000);
 
-    		e.salary = get_float("Salary: ");
-	    	e.comm = get_float("Commission: ");
 		
 		printf("Available Departments:\n");
 		mysql_query(conn, "SELECT dept_id, dept_name FROM department");
@@ -463,25 +629,77 @@ int main()
             display_records();
             break;
 
-        case 3:
-            printf("Enter ID: ");
-            scanf("%d", &id);
-            view_record(id);
-            break;
+	    case 3: 
+	    {
+    		int opt;
+    		printf("\nView By:\n");
+    		printf("1. Location\n");
+    		printf("2. Department\n");
+    		printf("3. Manager\n");
+		printf("4. By ID\n");
 
-        case 4:
-            printf("Enter ID: ");
-            scanf("%d", &id);
-            printf("New Salary: ");
-            scanf("%f", &e.salary);
-            update_salary(id, e.salary);
-            break;
+    		opt = get_int("Choose option: ");
 
-        case 5:
-            printf("Enter ID: ");
-            scanf("%d", &id);
-            delete_record(id);
-            break;
+    		if (opt == 1) view_by_location(conn);
+    		else if (opt == 2) view_by_department(conn);
+    		else if (opt == 3) view_by_manager(conn);
+		else if (opt == 4) 
+			{
+     			   int emp_id = get_int("Enter Employee ID: ");
+        		   view_record(emp_id);   
+    			}
+    		else printf("Invalid option\n");
+
+    		break;
+	   }
+
+
+        case 4: 
+	    {
+ 		char name[50];
+    		int emp_id;
+    		float new_salary;
+
+    		get_string("Enter employee name: ", name, sizeof(name));
+
+    		list_emp_by_name(conn, name);
+
+    		emp_id = get_int("Enter Emp ID to update salary: ");
+    		new_salary = get_valid_float("Enter new salary: ", 1, 10000000);
+
+    		char query[256];
+    		sprintf(query,"UPDATE emp_info SET salary = %.2f WHERE emp_id = %d",new_salary, emp_id);
+
+    		if (mysql_query(conn, query) == 0)
+        	printf("Salary updated successfully.\n");
+    		else
+        	printf("Update failed: %s\n", mysql_error(conn));
+
+    		break;
+	   }
+
+
+	case 5: 
+	    {
+    		char name[50];
+    		int emp_id;
+
+    		get_string("Enter employee name: ", name, sizeof(name));
+
+    		list_emp_by_name(conn, name);
+
+    		emp_id = get_int("Enter Emp ID to delete: ");
+
+    		char query[256];
+    		sprintf(query,"UPDATE emp_info SET is_deleted = 1 WHERE emp_id = %d",emp_id);
+
+    		if (mysql_query(conn, query) == 0)
+        	printf("Record deleted successfully.\n");
+    		else
+        	printf("Delete failed: %s\n", mysql_error(conn));
+
+    		break;
+	   }
 
         case 6:
             mysql_close(conn);
