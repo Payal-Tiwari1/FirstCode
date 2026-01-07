@@ -18,12 +18,22 @@ struct emp {
     int location_id;
 };
 
+struct address {
+    int emp_id;
+    char address_line1[100];
+    char city[50];
+};
+
+
 int is_valid_dob(const char *dob, int *d, int *m, int *y);
 int isValidDate(int d, int m, int y);
 int isFutureDate(int d, int m, int y);
 float get_valid_float(const char *prompt, float min, float max);
 int calculateAge(int d, int m, int y);
 void view_record(int id);
+void insert_address(MYSQL *conn, struct address a);
+void view_full_record(MYSQL *conn, int emp_id);
+void export_employee_report(MYSQL *conn);
 
 
 int get_int(const char *msg)
@@ -272,6 +282,63 @@ void print_result(MYSQL_RES *res) {
 }
 
 
+// --------------- Export Report ---------------//
+
+
+
+void export_employee_report(MYSQL *conn) {
+    FILE *fp = fopen("/home/payal_tiwari/Reports/employee_report.csv", "w");
+    if (!fp) {
+        printf("Unable to create report file.\n");
+        return;
+    }
+
+    char query[1024];
+
+    sprintf(query,
+        "SELECT e.emp_id, e.emp_name, e.dob, e.age, e.salary, "
+        "d.dept_name, "
+        "m.emp_name AS manager, "
+        "l.city, "
+        "a.address_line1, a.city "
+        "FROM emp_info e "
+        "LEFT JOIN department d ON e.dept_id = d.dept_id "
+        "LEFT JOIN emp_info m ON e.manager_id = m.emp_id "
+        "LEFT JOIN location l ON e.location_id = l.location_id "
+        "LEFT JOIN address a ON e.emp_id = a.emp_id "
+        "WHERE e.is_deleted = 0");
+
+    if (mysql_query(conn, query)) {
+        printf("Query failed: %s\n", mysql_error(conn));
+        fclose(fp);
+        return;
+    }
+
+    MYSQL_RES *res = mysql_store_result(conn);
+    MYSQL_ROW row;
+
+    fprintf(fp, "EmpID,Name,DOB,Age,Salary,Department,Manager,Location,Address,City\n");
+
+    while ((row = mysql_fetch_row(res))) 
+    {
+        fprintf(fp, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+        row[0], row[1], row[2], row[3], row[4],
+        row[5] ? row[5] : "",
+        row[6] ? row[6] : "",
+        row[7] ? row[7] : "",
+        row[8] ? row[8] : "",
+        row[9] ? row[9] : "");
+    }
+
+    mysql_free_result(res);
+    fclose(fp);
+
+    printf("Employee report exported successfully (home/payal_tiwari/Reports/employee_report.csv)\n");
+}
+
+
+
+
 
 void view_by_location(MYSQL *conn) {
     char location[50];
@@ -391,12 +458,64 @@ void list_emp_by_name(MYSQL *conn, const char *name) {
 
 
 
+
+void view_full_record(MYSQL *conn, int emp_id) {
+    char query[1024];
+
+    sprintf(query,
+        "SELECT e.emp_id, e.emp_name, e.dob, e.age, e.salary, "
+        "d.dept_name, "
+        "m.emp_name AS manager_name, "
+        "l.city, "
+        "a.address_line1, a.city "
+        "FROM emp_info e "
+        "LEFT JOIN department d ON e.dept_id = d.dept_id "
+        "LEFT JOIN emp_info m ON e.manager_id = m.emp_id "
+        "LEFT JOIN location l ON e.location_id = l.location_id "
+        "LEFT JOIN address a ON e.emp_id = a.emp_id "
+        "WHERE e.emp_id = %d AND e.is_deleted = 0",
+        emp_id);
+
+    if (mysql_query(conn, query)) {
+        printf("Query failed: %s\n", mysql_error(conn));
+        return;
+    }
+
+    MYSQL_RES *res = mysql_store_result(conn);
+
+    if (mysql_num_rows(res) == 0) {
+        printf("Record not found.\n");
+        mysql_free_result(res);
+        return;
+    }
+
+    MYSQL_ROW row = mysql_fetch_row(res);
+
+    printf("\n=========== EMPLOYEE FULL RECORD ===========\n");
+    printf("Emp ID     : %s\n", row[0]);
+    printf("Name       : %s\n", row[1]);
+    printf("DOB        : %s\n", row[2]);
+    printf("Age        : %s\n", row[3]);
+    printf("Salary     : %s\n", row[4]);
+    printf("Department : %s\n", row[5] ? row[5] : "N/A");
+    printf("Manager    : %s\n", row[6] ? row[6] : "N/A");
+    printf("Location   : %s\n", row[7] ? row[7] : "N/A");
+    printf("Address    : %s\n", row[8] ? row[8] : "N/A");
+    printf("City       : %s\n", row[9] ? row[9] : "N/A");
+    printf("===========================================\n");
+
+    mysql_free_result(res);
+}
+
+
+
+
 // ------------- Create Records --------------//
 
    void create_record(struct emp e)
 {
     char query[512];
-    int id;
+    int emp_id;
 
     sprintf(query,
         "INSERT INTO emp_info "
@@ -409,12 +528,40 @@ void list_emp_by_name(MYSQL *conn, const char *name) {
         printf("Insert failed: %s\n", mysql_error(conn));
     else
     	
-	id = mysql_insert_id(conn);
-	printf("Record inserted successfully. Emp ID = %d\n", id);
+	emp_id = mysql_insert_id(conn);
+	printf("Record inserted successfully. Emp ID = %d\n", emp_id);
+	
+		// Address Insert//
+	struct address a;
+    	a.emp_id = emp_id;
 
-	view_record(id);
+    	get_string("Address Line 1: ", a.address_line1, sizeof(a.address_line1));
+    	get_string("City: ", a.city, sizeof(a.city));
+
+    	insert_address(conn, a);
+
+	view_record(emp_id);
 }
 
+
+// -------------- Create Address --------------//
+
+void insert_address(MYSQL *conn, struct address a) 
+{
+    char query[512];
+
+    sprintf(query,
+        "INSERT INTO address (emp_id, address_line1, city) "
+        "VALUES (%d, '%s', '%s')",
+        a.emp_id, a.address_line1, a.city);
+
+    if (mysql_query(conn, query)) {
+        printf("Address insert failed: %s\n", mysql_error(conn));
+        return;
+    }
+
+    printf("Address inserted successfully.\n");
+}
 
  
 
@@ -544,7 +691,7 @@ int main()
 
     while (1)
     {
-        printf("\n1.Create\n2.Display\n3.View\n4.Update Salary\n5.Delete\n6.Exit\n");
+        printf("\n1.Create\n2.Display\n3.View\n4.Update Salary\n5.Delete\n6.Export Employee Report\n7.Exit\n");
         scanf("%d", &choice);
 	getchar();
 
@@ -637,6 +784,7 @@ int main()
     		printf("2. Department\n");
     		printf("3. Manager\n");
 		printf("4. By ID\n");
+		printf("5. Full Record\n");
 
     		opt = get_int("Choose option: ");
 
@@ -644,10 +792,15 @@ int main()
     		else if (opt == 2) view_by_department(conn);
     		else if (opt == 3) view_by_manager(conn);
 		else if (opt == 4) 
-			{
-     			   int emp_id = get_int("Enter Employee ID: ");
-        		   view_record(emp_id);   
-    			}
+		{
+     			 int emp_id = get_int("Enter Employee ID: ");
+        		 view_record(emp_id);   
+    		}
+		else if (opt == 5)
+		{
+			int emp_id = get_int("Enter Employee ID: ");
+    			view_full_record(conn, emp_id);
+		}
     		else printf("Invalid option\n");
 
     		break;
@@ -662,7 +815,7 @@ int main()
 
     		get_string("Enter employee name: ", name, sizeof(name));
 
-    		list_emp_by_name(conn, name);
+    		list_emp_by_name(conn, name);   // shows all name like 
 
     		emp_id = get_int("Enter Emp ID to update salary: ");
     		new_salary = get_valid_float("Enter new salary: ", 1, 10000000);
@@ -702,9 +855,15 @@ int main()
 	   }
 
         case 6:
-            mysql_close(conn);
-            exit(0);
-        }
+              	export_employee_report(conn);
+            	break;
+	    
+	    
+	case 7:
+	    	mysql_close(conn);
+            	exit(0);
+   
+	}
     }
 }
 
